@@ -1,0 +1,155 @@
+// Transactional Email App — database schema (SQLite).
+// Allowed values for status/role fields live in src/config/constants.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// People who can open the admin panel
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         String    @default("VIEWER") // ADMIN | VIEWER
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("users")
+}
+
+/// Brand + sending settings (JSON values, validated in src/config/settings.ts)
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+/// Admin overrides for a code template (subject, preheader, on/off)
+model TemplateSetting {
+  id          String   @id @default(cuid())
+  templateKey String   @unique
+  subject     String?
+  preheader   String?
+  enabled     Boolean  @default(true)
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("template_settings")
+}
+
+/// One row per email we tried to send
+model EmailLog {
+  id             String    @id @default(cuid())
+  templateKey    String
+  to             String
+  subject        String
+  status         String    @default("QUEUED") // QUEUED | SENT | DELIVERED | DELAYED | BOUNCED | COMPLAINED | FAILED | SUPPRESSED | TEST
+  provider       String    // resend | test
+  providerId     String?   @unique
+  idempotencyKey String?   @unique
+  /// template data with links/tokens masked
+  dataMasked     String?
+  /// full HTML, stored only in test mode (live emails can contain login links)
+  html           String?
+  error          String?
+  attempts       Int       @default(0)
+  source         String    @default("api") // api | admin-test | system
+  apiKeyId       String?
+  sentAt         DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  events EmailEvent[]
+
+  @@index([status, createdAt])
+  @@index([templateKey, createdAt])
+  @@index([to])
+  @@index([createdAt])
+  @@map("email_logs")
+}
+
+/// Webhook events from the provider (delivered, bounced, complained…)
+model EmailEvent {
+  id        String   @id @default(cuid())
+  logId     String?
+  type      String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  log EmailLog? @relation(fields: [logId], references: [id], onDelete: Cascade)
+
+  @@index([logId, createdAt])
+  @@map("email_events")
+}
+
+/// Addresses we must not email again (bounced, spam complaint or added by hand)
+model Suppression {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  reason    String   // BOUNCE | COMPLAINT | MANUAL
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@map("suppressions")
+}
+
+/// Keys your website/app uses to call POST /api/v1/send
+model ApiKey {
+  id         String    @id @default(cuid())
+  name       String
+  prefix     String
+  hash       String    @unique
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@map("api_keys")
+}
+
+/// Quotations created in the app (items, totals, branded PDF, client accept/decline link)
+model Quote {
+  id           String    @id @default(cuid())
+  number       String    @unique // QT-2026-001
+  status       String    @default("DRAFT") // DRAFT | SENT | VIEWED | ACCEPTED | DECLINED
+  clientName   String
+  clientEmail  String
+  clientCompany String?
+  title        String
+  /// JSON: [{ "description": "...", "quantity": 1, "unitPrice": 25000 }]
+  items        String
+  currency     String    @default("INR")
+  taxPercent   Float     @default(18)
+  discount     Float     @default(0)
+  subtotal     Float     @default(0)
+  total        Float     @default(0)
+  validUntil   DateTime?
+  notes        String?
+  terms        String?
+  /// random part of the client's link /q/<publicToken>
+  publicToken  String    @unique
+  sentAt       DateTime?
+  viewedAt     DateTime?
+  respondedAt  DateTime?
+  responseNote String?
+  lastEmailId  String?
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@map("quotes")
+}
